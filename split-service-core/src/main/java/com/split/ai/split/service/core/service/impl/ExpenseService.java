@@ -5,8 +5,11 @@ import com.split.ai.split.service.commons.exception.SplitException;
 import com.split.ai.split.service.core.helper.ExpenseHelper;
 import com.split.ai.split.service.core.mapper.ExpenseServiceMapper;
 import com.split.ai.split.service.core.service.IExpenseService;
+import com.split.ai.split.service.core.engine.SplitEngineAdapter;
+import com.split.ai.split.service.core.utils.MoneyUtil;
 import com.split.ai.split.service.model.enums.EXPENSE_REVISION_STATUS;
 import com.split.ai.split.service.model.enums.EXPENSE_STATUS;
+import com.split.ai.split.service.model.enums.CURRENCY;
 import com.split.ai.split.service.model.request.expense.CreateExpenseRequest;
 import com.split.ai.split.service.model.request.expense.DeleteExpenseRequest;
 import com.split.ai.split.service.model.request.expense.UpdateExpenseRequest;
@@ -26,12 +29,18 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
+
+import io.split.engine.Share;
+import io.split.engine.SplitEngineJvm;
+import io.split.engine.SplitInput;
 
 /**
  * Service handling expense operations.
@@ -55,7 +64,7 @@ public class ExpenseService implements IExpenseService {
     @Override
     public void createExpense(CreateExpenseRequest request) {
         log.info("[ExpenseService : createExpense] : {}", request);
-        // todo: SplitEngine logic to verify the userExpenseDetails
+        validateSplit(request);
 
         UUID expenseId = UUID.randomUUID();
         ExpenseRevisionEntity revision = ExpenseServiceMapper.MAPPER.toRevisionEntity(request, expenseId);
@@ -144,6 +153,35 @@ public class ExpenseService implements IExpenseService {
         return ExpenseHistoryResponse.builder()
                 .expenseEditList(edits)
                 .build();
+    }
+
+    private void validateSplit(CreateExpenseRequest request) {
+        int scale = resolveScale(request.getCurrency());
+        SplitInput input = SplitEngineAdapter.toInput(request, scale);
+        List<Share> shares = SplitEngineJvm.computeShares(input);
+
+        Map<String, BigDecimal> expectedMap = shares.stream()
+                .collect(Collectors.toMap(Share::getUserId, s -> MoneyUtil.toBig(s.getOwe())));
+        Map<String, BigDecimal> clientMap = request.getUserExpenseDetails().stream()
+                .collect(Collectors.toMap(dto -> dto.getUserId().toString(), dto -> dto.getSharedAmount().setScale(scale, RoundingMode.UNNECESSARY)));
+
+        if (!expectedMap.keySet().equals(clientMap.keySet())) {
+            log.error("[ExpenseService : validateSplit] : participant mismatch expected {} got {}", expectedMap.keySet(), clientMap.keySet());
+            throw SplitException.createException(ErrorCode.INVALID_QUERY);
+        }
+
+        for (String user : expectedMap.keySet()) {
+            BigDecimal expected = expectedMap.get(user).setScale(scale, RoundingMode.UNNECESSARY);
+            BigDecimal actual = clientMap.get(user);
+            if (expected.compareTo(actual) != 0) {
+                log.error("[ExpenseService : validateSplit] : amount mismatch for user {} expected {} got {}", user, expected, actual);
+                throw SplitException.createException(ErrorCode.INVALID_QUERY);
+            }
+        }
+    }
+
+    private int resolveScale(CURRENCY currency) {
+        return currency == null ? 2 : currency.scale();
     }
 
     private void computeUserShareChanges(Map<UUID, BigDecimal> oldShares, Map<UUID, BigDecimal> newShares, Map<String, ChangeDto> userShareChanges) {
