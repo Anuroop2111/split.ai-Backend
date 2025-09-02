@@ -22,7 +22,8 @@ import java.util.stream.Collectors;
 
 public final class SplitPayloadFactory {
 
-    private SplitPayloadFactory() {}
+    private SplitPayloadFactory() {
+    }
 
     @FunctionalInterface
     private interface PayloadBuilder {
@@ -33,6 +34,7 @@ public final class SplitPayloadFactory {
 
     static {
         BUILDERS.put(SPLIT_MODE.EQUAL, (req, participants, scale) -> new EqualPayload(participants));
+
         BUILDERS.put(SPLIT_MODE.EXACT, (req, participants, scale) -> {
             ExactSplitRequest eReq = (ExactSplitRequest) req;
             List<UserAmount> items = eReq.getUserAmountSplitDtoList().stream()
@@ -40,6 +42,7 @@ public final class SplitPayloadFactory {
                     .collect(Collectors.toList());
             return new ExactPayload(items);
         });
+
         BUILDERS.put(SPLIT_MODE.PERCENTAGE, (req, participants, scale) -> {
             PercentageSplitRequest pReq = (PercentageSplitRequest) req;
             List<UserBps> items = pReq.getUserPercentageSplitDtoList().stream()
@@ -47,6 +50,7 @@ public final class SplitPayloadFactory {
                     .collect(Collectors.toList());
             return new PercentPayload(items);
         });
+
         BUILDERS.put(SPLIT_MODE.RATIO, (req, participants, scale) -> {
             RatioSplitRequest rReq = (RatioSplitRequest) req;
             List<UserRatio> items = rReq.getUserRatioSplitDtoList().stream()

@@ -1,17 +1,19 @@
-package com.split.ai.split.service.repository;
+package com.split.ai.split.service.repository.dao.impl;
 
 import com.split.ai.commons.postgres.PostgresClient;
+import com.split.ai.split.service.repository.dao.ILocalCredentialsDao;
 import com.split.ai.split.service.repository.entity.LocalCredentialsEntity;
-import java.util.Optional;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
 
+import java.util.Optional;
+import java.util.UUID;
+
 @Slf4j
 @Repository
 @RequiredArgsConstructor
-public class LocalCredentialsDao {
+public class LocalCredentialsDao implements ILocalCredentialsDao {
 
     private final PostgresClient postgresClient;
 

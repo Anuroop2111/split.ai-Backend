@@ -10,8 +10,8 @@ import com.split.ai.split.service.model.request.userauth.LogoutRequest;
 import com.split.ai.split.service.model.request.userauth.SignupRequest;
 import com.split.ai.split.service.model.response.userauth.LoginResponse;
 import com.split.ai.split.service.model.response.userauth.SignupResponse;
-import com.split.ai.split.service.repository.IdentityDao;
-import com.split.ai.split.service.repository.LocalCredentialsDao;
+import com.split.ai.split.service.repository.dao.IIdentityDao;
+import com.split.ai.split.service.repository.dao.ILocalCredentialsDao;
 import com.split.ai.split.service.repository.entity.IdentityEntity;
 import com.split.ai.split.service.repository.entity.LocalCredentialsEntity;
 import lombok.RequiredArgsConstructor;
@@ -27,8 +27,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class UserAuthService implements IUserAuthService {
 
-    private final IdentityDao identityDao;
-    private final LocalCredentialsDao localCredentialsDao;
+    private final IIdentityDao identityDao;
+    private final ILocalCredentialsDao localCredentialsDao;
     private final IPasswordService passwordService;
 
     @Value("${security.password.hash-algo}")

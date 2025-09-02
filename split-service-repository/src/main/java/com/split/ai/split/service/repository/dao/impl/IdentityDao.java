@@ -1,21 +1,23 @@
-package com.split.ai.split.service.repository;
+package com.split.ai.split.service.repository.dao.impl;
 
 import com.split.ai.commons.postgres.PostgresClient;
 import com.split.ai.split.service.model.enums.IDENTITY_PROVIDER;
+import com.split.ai.split.service.repository.dao.IIdentityDao;
 import com.split.ai.split.service.repository.entity.IdentityEntity;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Repository;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Repository;
 
 @Slf4j
 @Repository
 @RequiredArgsConstructor
-public class IdentityDao {
+public class IdentityDao implements IIdentityDao {
 
     private final PostgresClient postgresClient;
 
