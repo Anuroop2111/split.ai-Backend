@@ -16,7 +16,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
-@Table(name = "auth_refresh_token")
+@Table(name = "refresh_token")
 public class RefreshTokenEntity {
 
     @Id
