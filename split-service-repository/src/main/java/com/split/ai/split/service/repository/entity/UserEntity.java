@@ -49,6 +49,9 @@ public class UserEntity {
     @Column(nullable = false)
     private LANGUAGE language;
 
+    @Column(nullable = false)
+    private int tokenVersion;
+
     @Column(nullable = false, updatable = false)
     private Long createdAt;
 
