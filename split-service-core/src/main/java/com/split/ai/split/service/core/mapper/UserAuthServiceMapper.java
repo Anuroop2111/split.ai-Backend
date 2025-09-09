@@ -18,9 +18,13 @@ public interface UserAuthServiceMapper extends BaseServiceMapper {
 
     @Mapping(target = "userId", source = "userId")
     @Mapping(target = "userName", source = "request.userName")
+    @Mapping(target = "accessToken", ignore = true)
+    @Mapping(target = "refreshToken", ignore = true)
     SignupResponse toSignupResponse(SignupRequest request, UUID userId);
 
     @Mapping(target = "userName", source = "identifier")
+    @Mapping(target = "accessToken", ignore = true)
+    @Mapping(target = "refreshToken", ignore = true)
     LoginResponse toLoginResponse(IdentityEntity identityEntity);
 
     @Mapping(target = "identityId", source = "request", qualifiedByName = "randomUUID")
