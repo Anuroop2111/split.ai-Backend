@@ -3,6 +3,8 @@ package com.split.ai.split.service.core.service.impl;
 import com.split.ai.split.service.commons.exception.ErrorCode;
 import com.split.ai.split.service.commons.exception.SplitException;
 import com.split.ai.split.service.core.mapper.UserAuthServiceMapper;
+import com.split.ai.split.service.core.helper.TokenHelper;
+import com.split.ai.split.service.core.helper.TokenHelper.Tokens;
 import com.split.ai.split.service.core.service.IPasswordService;
 import com.split.ai.split.service.core.service.ITokenService;
 import com.split.ai.split.service.core.service.IUserAuthService;
@@ -21,6 +23,9 @@ import com.split.ai.split.service.repository.entity.RefreshTokenEntity;
 import com.split.ai.split.service.repository.entity.SessionEntity;
 import com.split.ai.split.service.repository.entity.UserEntity;
 import com.split.ai.split.service.model.enums.USER_STATUS;
+import com.split.ai.split.service.model.enums.LANGUAGE;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,14 +47,12 @@ public class UserAuthService implements IUserAuthService {
     private final IUserDao userDao;
     private final IPasswordService passwordService;
     private final ITokenService tokenService;
+    private final TokenHelper tokenHelper;
 
     @Value("${security.password.hash-algo}")
     private String hashAlgo;
 
-    @Value("${security.auth.refresh-token-ttl}")
-    private long refreshTtl;
-
-    public SignupResponse signup(SignupRequest request) {
+    public SignupResponse signup(SignupRequest request, HttpServletResponse httpResponse) {
         log.info("[UserAuthService : signup] : userName={}", request.getUserName());
         IdentityEntity identityEntity = UserAuthServiceMapper.MAPPER.toIdentityEntity(request, Boolean.FALSE);
         UUID userId = identityEntity.getUserId();
@@ -59,12 +62,26 @@ public class UserAuthService implements IUserAuthService {
         LocalCredentialsEntity credentialsEntity = UserAuthServiceMapper.MAPPER.toLocalCredentialsEntity(userId, encodedPassword, hashAlgo);
         localCredentialsDao.save(credentialsEntity);
 
+        UserEntity userEntity = UserEntity.builder()
+                .userId(userId)
+                .fullName(request.getUserName())
+                .userName(request.getUserName())
+                .emailId(request.getEmailId())
+                .phone("")
+                .userStatus(USER_STATUS.ACTIVE)
+                .language(LANGUAGE.ENGLISH)
+                .tokenVersion(0)
+                .build();
+        userEntity.beforeInsertOrUpdate();
+        userDao.save(userEntity);
+
         SignupResponse response = UserAuthServiceMapper.MAPPER.toSignupResponse(request, userId);
-        attachTokens(userId, 0, response);
+        Tokens tokens = tokenHelper.createTokens(userId, userEntity.getTokenVersion());
+        tokenHelper.setCookies(httpResponse, tokens);
         return response;
     }
 
-    public LoginResponse login(LoginRequest request) {
+    public LoginResponse login(LoginRequest request, HttpServletResponse httpResponse) {
         log.info("[UserAuthService : login] : identifier={}", request.getIdentifier());
         Optional<IdentityEntity> identityOpt = identityDao.findByProviderAndIdentifier(request.getProvider(), request.getIdentifier());
         IdentityEntity identityEntity = identityOpt.orElseThrow(() -> {
@@ -92,63 +109,33 @@ public class UserAuthService implements IUserAuthService {
             throw SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
         }
         LoginResponse response = UserAuthServiceMapper.MAPPER.toLoginResponse(identityEntity);
-        attachTokens(userEntity.getUserId(), userEntity.getTokenVersion(), response);
+        Tokens tokens = tokenHelper.createTokens(userEntity.getUserId(), userEntity.getTokenVersion());
+        tokenHelper.setCookies(httpResponse, tokens);
         return response;
     }
 
-
-    public void logout(String refreshToken) {
+    public void logout(HttpServletRequest httpRequest, HttpServletResponse httpResponse) {
+        String refreshToken = tokenHelper.getRefreshToken(httpRequest);
+        tokenHelper.clearCookies(httpResponse);
         if (refreshToken == null) {
             return;
         }
         try {
             Map<String, Object> claims = tokenService.parseRefreshToken(refreshToken);
             UUID tokenId = UUID.fromString((String) claims.get("jti"));
-            refreshTokenDao.findById(tokenId).ifPresent(rt -> {
-                rt.setRevokedAt(System.currentTimeMillis());
-                refreshTokenDao.update(rt);
-                sessionDao.findById(rt.getSessionId()).ifPresent(sess -> {
-                    sess.setRevokedAt(System.currentTimeMillis());
-                    sessionDao.update(sess);
-                });
-            });
+            RefreshTokenEntity rt = refreshTokenDao.findById(tokenId)
+                    .orElseThrow(() -> SplitException.createException(ErrorCode.INVALID_CREDENTIALS));
+            SessionEntity sess = sessionDao.findById(rt.getSessionId())
+                    .orElseThrow(() -> SplitException.createException(ErrorCode.INVALID_CREDENTIALS));
+            rt.setRevokedAt(System.currentTimeMillis());
+            refreshTokenDao.update(rt);
+            sess.setRevokedAt(System.currentTimeMillis());
+            sessionDao.update(sess);
+        } catch (SplitException e) {
+            throw e;
         } catch (Exception e) {
             log.error("[UserAuthService : logout] : failed", e);
+            throw SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
         }
     }
-
-    private void attachTokens(UUID userId, int tokenVersion, SignupResponse response) {
-        Tokens tokens = createTokens(userId, tokenVersion);
-        response.setAccessToken(tokens.accessToken);
-        response.setRefreshToken(tokens.refreshToken);
-    }
-
-    private void attachTokens(UUID userId, int tokenVersion, LoginResponse response) {
-        Tokens tokens = createTokens(userId, tokenVersion);
-        response.setAccessToken(tokens.accessToken);
-        response.setRefreshToken(tokens.refreshToken);
-    }
-
-    private Tokens createTokens(UUID userId, int tokenVersion) {
-        UUID sessionId = UUID.randomUUID();
-        sessionDao.save(SessionEntity.builder().sessionId(sessionId).userId(userId).build());
-
-        UUID refreshTokenId = UUID.randomUUID();
-        String refreshToken = tokenService.generateRefreshToken(refreshTokenId, userId, sessionId, tokenVersion);
-        long now = System.currentTimeMillis();
-        RefreshTokenEntity refreshEntity = RefreshTokenEntity.builder()
-                .refreshTokenId(refreshTokenId)
-                .userId(userId)
-                .sessionId(sessionId)
-                .tokenHash(tokenService.hashToken(refreshToken))
-                .issuedAt(now)
-                .expiresAt(now + refreshTtl)
-                .build();
-        refreshTokenDao.save(refreshEntity);
-
-        String accessToken = tokenService.generateAccessToken(userId, sessionId, tokenVersion);
-        return new Tokens(accessToken, refreshToken);
-    }
-
-    private record Tokens(String accessToken, String refreshToken) {}
 }
