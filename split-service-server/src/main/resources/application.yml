@@ -9,4 +9,12 @@ security:
   password:
     pepper: ${PASSWORD_PEPPER:defaultPepper}
     hash-algo: argon2id
+  auth:
+    access-token-secret: ${ACCESS_TOKEN_SECRET:changeMeAccess}
+    refresh-token-secret: ${REFRESH_TOKEN_SECRET:changeMeRefresh}
+    access-token-ttl: ${ACCESS_TOKEN_TTL:900000} # 15 minutes
+    refresh-token-ttl: ${REFRESH_TOKEN_TTL:2592000000} # 30 days
+    session-max-age: ${SESSION_MAX_AGE:2592000000} # 30 days
+    access-token-refresh-before: ${ACCESS_TOKEN_REFRESH_BEFORE:60000} # 60 seconds
+    refresh-token-refresh-before: ${REFRESH_TOKEN_REFRESH_BEFORE:86400000} # 24 hours
 
