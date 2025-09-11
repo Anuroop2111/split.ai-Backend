@@ -54,6 +54,39 @@ public class UserAuthService implements IUserAuthService {
 
     public SignupResponse signup(SignupRequest request, HttpServletResponse httpResponse) {
         log.info("[UserAuthService : signup] : userName={}", request.getUserName());
+        Optional<IdentityEntity> existingIdentityOpt = identityDao.findByProviderAndIdentifier(request.getProvider(), request.getEmailId());
+        if (existingIdentityOpt.isPresent()) {
+            IdentityEntity existingIdentity = existingIdentityOpt.get();
+            LocalCredentialsEntity credentialsEntity = localCredentialsDao.findByUserId(existingIdentity.getUserId())
+                    .orElseThrow(() -> {
+                        log.error("[UserAuthService : signup] : credentials not found for user {}", existingIdentity.getUserId());
+                        return SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
+                    });
+
+            boolean matches = passwordService.matchesAndUpgrade(request.getPassword(), credentialsEntity.getPasswordHash(), newHash -> {
+                credentialsEntity.setPasswordHash(newHash);
+                localCredentialsDao.update(credentialsEntity);
+            });
+            if (!matches) {
+                log.error("[UserAuthService : signup] : password mismatch for user {}", existingIdentity.getUserId());
+                throw SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
+            }
+
+            UserEntity userEntity = userDao.findById(existingIdentity.getUserId());
+            if (userEntity.getUserStatus() == USER_STATUS.BLOCKED) {
+                log.error("[UserAuthService : signup] : user blocked {}", userEntity.getUserId());
+                throw SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
+            }
+
+            SignupResponse response = SignupResponse.builder()
+                    .userId(userEntity.getUserId())
+                    .userName(userEntity.getUserName())
+                    .build();
+            Tokens tokens = tokenHelper.createTokens(userEntity.getUserId(), userEntity.getTokenVersion());
+            tokenHelper.setCookies(httpResponse, tokens);
+            return response;
+        }
+
         IdentityEntity identityEntity = UserAuthServiceMapper.MAPPER.toIdentityEntity(request, Boolean.FALSE);
         UUID userId = identityEntity.getUserId();
         identityDao.save(identityEntity);
