@@ -5,6 +5,7 @@ import com.split.ai.split.service.model.response.userauth.LoginResponse;
 import com.split.ai.split.service.model.response.userauth.SignupResponse;
 import com.split.ai.split.service.repository.entity.IdentityEntity;
 import com.split.ai.split.service.repository.entity.LocalCredentialsEntity;
+import com.split.ai.split.service.repository.entity.UserEntity;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.factory.Mappers;
@@ -16,9 +17,7 @@ public interface UserAuthServiceMapper extends BaseServiceMapper {
 
     UserAuthServiceMapper MAPPER = Mappers.getMapper(UserAuthServiceMapper.class);
 
-    @Mapping(target = "userId", source = "userId")
-    @Mapping(target = "userName", source = "request.userName")
-    SignupResponse toSignupResponse(SignupRequest request, UUID userId);
+    SignupResponse toSignupResponse(UserEntity userEntity);
 
     @Mapping(target = "userName", source = "identifier")
     LoginResponse toLoginResponse(IdentityEntity identityEntity);

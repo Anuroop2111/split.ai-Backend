@@ -31,7 +31,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.Optional;
 import java.util.UUID;
 import java.util.Map;
 
@@ -54,48 +53,89 @@ public class UserAuthService implements IUserAuthService {
 
     public SignupResponse signup(SignupRequest request, HttpServletResponse httpResponse) {
         log.info("[UserAuthService : signup] : userName={}", request.getUserName());
-        Optional<IdentityEntity> existingIdentityOpt = identityDao.findByProviderAndIdentifier(request.getProvider(), request.getEmailId());
-        if (existingIdentityOpt.isPresent()) {
-            IdentityEntity existingIdentity = existingIdentityOpt.get();
-            LocalCredentialsEntity credentialsEntity = localCredentialsDao.findByUserId(existingIdentity.getUserId())
-                    .orElseThrow(() -> {
-                        log.error("[UserAuthService : signup] : credentials not found for user {}", existingIdentity.getUserId());
-                        return SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
-                    });
+        return identityDao.findByProviderAndIdentifier(request.getProvider(), request.getEmailId())
+                .map(identity -> signupExistingUser(identity, request.getPassword(), httpResponse))
+                .orElseGet(() -> signupNewUser(request, httpResponse));
+    }
 
-            boolean matches = passwordService.matchesAndUpgrade(request.getPassword(), credentialsEntity.getPasswordHash(), newHash -> {
-                credentialsEntity.setPasswordHash(newHash);
-                localCredentialsDao.update(credentialsEntity);
-            });
-            if (!matches) {
-                log.error("[UserAuthService : signup] : password mismatch for user {}", existingIdentity.getUserId());
-                throw SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
-            }
+    private SignupResponse signupExistingUser(IdentityEntity identity, String rawPassword, HttpServletResponse httpResponse) {
+        LocalCredentialsEntity credentials = localCredentialsDao.findByUserId(identity.getUserId())
+                .orElseThrow(() -> {
+                    log.error("[UserAuthService : signup] : credentials not found for user {}", identity.getUserId());
+                    return SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
+                });
 
-            UserEntity userEntity = userDao.findById(existingIdentity.getUserId());
-            if (userEntity.getUserStatus() == USER_STATUS.BLOCKED) {
-                log.error("[UserAuthService : signup] : user blocked {}", userEntity.getUserId());
-                throw SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
-            }
+        validatePassword(rawPassword, credentials);
 
-            SignupResponse response = SignupResponse.builder()
-                    .userId(userEntity.getUserId())
-                    .userName(userEntity.getUserName())
-                    .build();
-            Tokens tokens = tokenHelper.createTokens(userEntity.getUserId(), userEntity.getTokenVersion());
-            tokenHelper.setCookies(httpResponse, tokens);
-            return response;
-        }
+        UserEntity user = userDao.findById(identity.getUserId());
+        ensureUserActive(user);
+        issueTokens(user, httpResponse);
+        return UserAuthServiceMapper.MAPPER.toSignupResponse(user);
+    }
 
-        IdentityEntity identityEntity = UserAuthServiceMapper.MAPPER.toIdentityEntity(request, Boolean.FALSE);
-        UUID userId = identityEntity.getUserId();
-        identityDao.save(identityEntity);
+    private SignupResponse signupNewUser(SignupRequest request, HttpServletResponse httpResponse) {
+        IdentityEntity identity = UserAuthServiceMapper.MAPPER.toIdentityEntity(request, Boolean.FALSE);
+        identityDao.save(identity);
 
         String encodedPassword = passwordService.encode(request.getPassword());
-        LocalCredentialsEntity credentialsEntity = UserAuthServiceMapper.MAPPER.toLocalCredentialsEntity(userId, encodedPassword, hashAlgo);
-        localCredentialsDao.save(credentialsEntity);
+        LocalCredentialsEntity credentials = UserAuthServiceMapper.MAPPER.toLocalCredentialsEntity(identity.getUserId(), encodedPassword, hashAlgo);
+        localCredentialsDao.save(credentials);
 
-        UserEntity userEntity = UserEntity.builder()
+        UserEntity user = createUserEntity(request, identity.getUserId());
+        user.beforeInsertOrUpdate();
+        userDao.save(user);
+
+        issueTokens(user, httpResponse);
+        return UserAuthServiceMapper.MAPPER.toSignupResponse(user);
+    }
+
+    public LoginResponse login(LoginRequest request, HttpServletResponse httpResponse) {
+        log.info("[UserAuthService : login] : identifier={}", request.getIdentifier());
+        IdentityEntity identity = identityDao.findByProviderAndIdentifier(request.getProvider(), request.getIdentifier())
+                .orElseThrow(() -> {
+                    log.error("[UserAuthService : login] : identity not found for provider {} identifier {}", request.getProvider(), request.getIdentifier());
+                    return SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
+                });
+        LocalCredentialsEntity credentials = localCredentialsDao.findByUserId(identity.getUserId())
+                .orElseThrow(() -> {
+                    log.error("[UserAuthService : login] : credentials not found for user {}", identity.getUserId());
+                    return SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
+                });
+
+        validatePassword(request.getPassword(), credentials);
+
+        UserEntity user = userDao.findById(identity.getUserId());
+        ensureUserActive(user);
+
+        issueTokens(user, httpResponse);
+        return UserAuthServiceMapper.MAPPER.toLoginResponse(identity);
+    }
+
+    private void validatePassword(String rawPassword, LocalCredentialsEntity credentials) {
+        boolean matches = passwordService.matchesAndUpgrade(rawPassword, credentials.getPasswordHash(), newHash -> {
+            credentials.setPasswordHash(newHash);
+            localCredentialsDao.update(credentials);
+        });
+        if (!matches) {
+            log.error("[UserAuthService] : password mismatch for user {}", credentials.getUserId());
+            throw SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
+        }
+    }
+
+    private void ensureUserActive(UserEntity user) {
+        if (user.getUserStatus() == USER_STATUS.BLOCKED) {
+            log.error("[UserAuthService] : user blocked {}", user.getUserId());
+            throw SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
+        }
+    }
+
+    private void issueTokens(UserEntity user, HttpServletResponse httpResponse) {
+        Tokens tokens = tokenHelper.createTokens(user.getUserId(), user.getTokenVersion());
+        tokenHelper.setCookies(httpResponse, tokens);
+    }
+
+    private UserEntity createUserEntity(SignupRequest request, UUID userId) {
+        return UserEntity.builder()
                 .userId(userId)
                 .fullName(request.getUserName())
                 .userName(request.getUserName())
@@ -105,46 +145,6 @@ public class UserAuthService implements IUserAuthService {
                 .language(LANGUAGE.ENGLISH)
                 .tokenVersion(0)
                 .build();
-        userEntity.beforeInsertOrUpdate();
-        userDao.save(userEntity);
-
-        SignupResponse response = UserAuthServiceMapper.MAPPER.toSignupResponse(request, userId);
-        Tokens tokens = tokenHelper.createTokens(userId, userEntity.getTokenVersion());
-        tokenHelper.setCookies(httpResponse, tokens);
-        return response;
-    }
-
-    public LoginResponse login(LoginRequest request, HttpServletResponse httpResponse) {
-        log.info("[UserAuthService : login] : identifier={}", request.getIdentifier());
-        Optional<IdentityEntity> identityOpt = identityDao.findByProviderAndIdentifier(request.getProvider(), request.getIdentifier());
-        IdentityEntity identityEntity = identityOpt.orElseThrow(() -> {
-            log.error("[UserAuthService : login] : identity not found for provider {} identifier {}", request.getProvider(), request.getIdentifier());
-            return SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
-        });
-        LocalCredentialsEntity credentialsEntity = localCredentialsDao.findByUserId(identityEntity.getUserId())
-                .orElseThrow(() -> {
-                    log.error("[UserAuthService : login] : credentials not found for user {}", identityEntity.getUserId());
-                    return SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
-                });
-
-        boolean matches = passwordService.matchesAndUpgrade(request.getPassword(), credentialsEntity.getPasswordHash(), newHash -> {
-            credentialsEntity.setPasswordHash(newHash);
-            localCredentialsDao.update(credentialsEntity);
-        });
-        if (!matches) {
-            log.error("[UserAuthService : login] : password mismatch for user {}", identityEntity.getUserId());
-            throw SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
-        }
-
-        UserEntity userEntity = userDao.findById(identityEntity.getUserId());
-        if (userEntity.getUserStatus() == USER_STATUS.BLOCKED) {
-            log.error("[UserAuthService : login] : user blocked {}", userEntity.getUserId());
-            throw SplitException.createException(ErrorCode.INVALID_CREDENTIALS);
-        }
-        LoginResponse response = UserAuthServiceMapper.MAPPER.toLoginResponse(identityEntity);
-        Tokens tokens = tokenHelper.createTokens(userEntity.getUserId(), userEntity.getTokenVersion());
-        tokenHelper.setCookies(httpResponse, tokens);
-        return response;
     }
 
     public void logout(HttpServletRequest httpRequest, HttpServletResponse httpResponse) {
