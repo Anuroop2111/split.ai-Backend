@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: ${DB_URL}
+    url: ${DB_URL}?prepareThreshold=0&autosave=always
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     prepareThreshold: 0
@@ -13,7 +13,7 @@ spring:
     properties:
       hibernate:
         format_sql: true
-        show_sql: true
+        show_sql: false
 
 security:
   password:
