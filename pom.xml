@@ -83,6 +83,13 @@
             <artifactId>spring-security-crypto</artifactId>
         </dependency>
 
+        <!-- Argon2 support -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.78.1</version>
+        </dependency>
+
         <!-- Lombok – compile-only -->
         <dependency>
             <groupId>org.projectlombok</groupId>
